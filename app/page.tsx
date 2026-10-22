@@ -5,8 +5,17 @@ import ChatPanel from "./ChatPanel";
 
 type Listing = {
   id: string; user_id: string; title: string; description: string; price: number;
-  city: string; image_url: string | null; status: "pending"|"approved"|"rejected"|"needs_review"; created_at: string;
+  city: string; category: string; image_url: string | null; status: "pending"|"approved"|"rejected"|"needs_review"; created_at: string;
 };
+
+const CATEGORIES = [
+  { value: "electronics", label: "Электроника" },
+  { value: "clothing", label: "Одежда и обувь" },
+  { value: "tools", label: "Инструменты" },
+  { value: "transport", label: "Транспорт" },
+  { value: "home", label: "Дом и сад" },
+  { value: "other", label: "Другое" },
+] as const;
 
 export default function Home() {
   const supabase = useMemo(() => getSupabase(), []);
@@ -17,13 +26,18 @@ export default function Home() {
   const [favoriteIds,setFavoriteIds] = useState<string[]>([]);
   const [email,setEmail] = useState(""); const [password,setPassword] = useState("");
   const [title,setTitle] = useState(""); const [description,setDescription] = useState("");
+  const [listingCategory,setListingCategory] = useState("other");
   const [price,setPrice] = useState(""); const [city,setCity] = useState(""); const [photo,setPhoto] = useState<File|null>(null);
   const [search,setSearch] = useState(""); const [filter,setFilter] = useState<"all"|"mine"|"favorites">("all");
+  const [categoryFilter,setCategoryFilter] = useState("all");
+  const [minPrice,setMinPrice] = useState("");
+  const [maxPrice,setMaxPrice] = useState("");
+  const [sortBy,setSortBy] = useState<"newest"|"price-asc"|"price-desc">("newest");
   const [notice,setNotice] = useState(""); const [kind,setKind] = useState("info"); const [busy,setBusy] = useState(false);
   const say=(s:string,k="info")=>{setNotice(s);setKind(k)};
   async function loadListings(uid?:string, moderator=false) {
     if(!supabase) return;
-    const {data,error}=await supabase.from("listings").select("id,user_id,title,description,price,city,image_url,status,created_at").order("created_at",{ascending:false}).limit(100);
+    const {data,error}=await supabase.from("listings").select("id,user_id,title,description,price,city,category,image_url,status,created_at").order("created_at",{ascending:false}).limit(100);
     if(error){say("Не удалось загрузить объявления. Проверь настройки Supabase.","error");return;}
     const all=(data??[]) as Listing[];
     setListings(all.filter(x=>x.status==="approved")); setMine(uid?all.filter(x=>x.user_id===uid):[]); setReview(moderator?all.filter(x=>x.status==="pending"||x.status==="needs_review"):[]);
@@ -52,7 +66,16 @@ export default function Home() {
   },[supabase]);
   const source=filter==="mine"?mine:filter==="favorites"?listings.filter(x=>favoriteIds.includes(x.id)):listings;
   const term=search.trim().toLocaleLowerCase("ru");
-  const shown=source.filter(x=>!term||[x.title,x.description,x.city].some(v=>v.toLocaleLowerCase("ru").includes(term)));
+  const shown=source.filter(x=>
+    (!term||[x.title,x.description,x.city].some(v=>v.toLocaleLowerCase("ru").includes(term))) &&
+    (categoryFilter==="all"||x.category===categoryFilter) &&
+    (minPrice===""||Number(x.price)>=Number(minPrice)) &&
+    (maxPrice===""||Number(x.price)<=Number(maxPrice))
+  ).sort((a,b)=>sortBy==="price-asc"
+    ? Number(a.price)-Number(b.price)
+    : sortBy==="price-desc"
+      ? Number(b.price)-Number(a.price)
+      : new Date(b.created_at).getTime()-new Date(a.created_at).getTime());
   async function toggleFavorite(listingId:string) {
     if (!supabase || !user) {
       say("Войди в аккаунт, чтобы сохранять объявления.","error");
@@ -125,6 +148,7 @@ export default function Home() {
       description:description.trim(),
       price:amount,
       city:city.trim(),
+      category:listingCategory,
       image_url:imageUrl,
       status:"pending"
     });
@@ -132,7 +156,7 @@ export default function Home() {
 
     if(error){say("Не удалось отправить объявление: "+error.message,"error");return;}
 
-    setTitle("");setDescription("");setPrice("");setCity("");setPhoto(null);
+    setTitle("");setDescription("");setPrice("");setCity("");setListingCategory("other");setPhoto(null);
     setFilter("mine");
     say("Объявление отправлено на ручную проверку. После одобрения оно появится в каталоге.","success");
     await loadListings(user.id,user.isModerator);
@@ -165,8 +189,8 @@ export default function Home() {
         </article>)}
       </section>}
       <div className="section-head"><div><h2>{filter==="mine"?"Мои объявления":filter==="favorites"?"Избранное":"Свежие объявления"}</h2><span className="muted">{filter==="mine"?"Статусы проверки":filter==="favorites"?"Сохранённые объявления":"Проверенные объявления пользователей"}</span></div><div className="pills"><button className={"pill "+(filter==="all"?"active":"")} onClick={()=>setFilter("all")}>Все</button><button className={"pill "+(filter==="mine"?"active":"")} onClick={()=>user?setFilter("mine"):say("Войди, чтобы увидеть свои объявления.","error")}>Мои</button><button className={"pill "+(filter==="favorites"?"active":"")} onClick={()=>user?setFilter("favorites"):say("Войди, чтобы открыть избранное.","error")}>Избранное</button></div></div>
-      <div className="layout"><section><div className="cards">{shown.length===0?<div className="empty"><div style={{fontSize:32}}>⌕</div><strong>{filter==="mine"?"Пока нет твоих объявлений":filter==="favorites"?"В избранном пока пусто":"Пока нет объявлений"}</strong><p className="muted">{search?"Попробуй изменить запрос.":filter==="favorites"?"Нажимай «В избранное» у понравившихся объявлений.":"Проверенные объявления появятся здесь."}</p></div>:shown.map(x=><article className="card" key={x.id}><div className="photo">{x.image_url?<img src={x.image_url} alt={x.title}/>:<span>◇</span>}</div><div className="card-body"><button type="button" className={"pill "+(favoriteIds.includes(x.id)?"active":"")} style={{marginBottom:8}} onClick={()=>void toggleFavorite(x.id)} aria-label={favoriteIds.includes(x.id)?"Убрать из избранного":"Добавить в избранное"}>{favoriteIds.includes(x.id)?"♥ В избранном":"♡ В избранное"}</button>{filter==="mine"&&<span className="status">{x.status==="approved"?"Опубликовано":x.status==="rejected"?"Отклонено":x.status==="needs_review"?"Нужна проверка":"На модерации"}</span>}<h3>{x.title}</h3><div className="meta" style={{marginBottom:8}}><a href={`/seller/${x.user_id}`} style={{color:"#5b5ce2",fontWeight:700}}>Профиль продавца →</a></div><div className="price">{new Intl.NumberFormat("ru-RU",{maximumFractionDigits:2}).format(Number(x.price))} ₽</div><div className="meta">⌖ {x.city} · {new Date(x.created_at).toLocaleDateString("ru-RU")}</div><p className="muted" style={{overflowWrap:"anywhere"}}>{x.description}</p></div></article>)}</div></section>
-      <aside className="panel" id="account">{!user?<><h2>Твой аккаунт</h2><p>Войди или зарегистрируйся, чтобы разместить бесплатное объявление.</p><form onSubmit={signIn}><div className="field"><label htmlFor="email">Электронная почта</label><input id="email" type="email" autoComplete="email" required value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@example.com"/></div><div className="field"><label htmlFor="password">Пароль</label><input id="password" type="password" minLength={8} autoComplete="current-password" required value={password} onChange={e=>setPassword(e.target.value)} placeholder="Не менее 8 символов"/></div><button className="btn primary full" disabled={busy||!supabase}>{busy?"Подожди…":"Войти"}</button></form><button className="btn secondary full" style={{marginTop:9}} disabled={busy||!supabase} onClick={signUp}>Создать аккаунт</button><p>Может потребоваться подтверждение почты.</p></>:<><h2>Новое объявление</h2><p>Публикация бесплатна. Новые объявления проходят проверку.</p><form onSubmit={createListing}><div className="field"><label htmlFor="title">Название</label><input id="title" value={title} onChange={e=>setTitle(e.target.value)} minLength={3} maxLength={120} required placeholder="Например, велосипед"/></div><div className="field"><label htmlFor="description">Описание</label><textarea id="description" value={description} onChange={e=>setDescription(e.target.value)} minLength={5} maxLength={5000} required placeholder="Состояние, характеристики, детали…"/></div><div className="field"><label htmlFor="price">Цена, ₽</label><input id="price" type="number" min="0" step="0.01" value={price} onChange={e=>setPrice(e.target.value)} required placeholder="0"/></div><div className="field"><label htmlFor="city">Город</label><input id="city" value={city} onChange={e=>setCity(e.target.value)} minLength={2} maxLength={100} required placeholder="Твой город"/></div><div className="field"><label htmlFor="image">Фото объявления (необязательно, до 5 МБ)</label><input id="image" type="file" accept="image/jpeg,image/png,image/webp" onChange={e=>setPhoto(e.target.files?.[0]??null)}/><p className="muted">Форматы: JPG, PNG, WebP.</p></div><button className="btn primary full" disabled={busy}>{busy?"Отправка…":"Отправить на проверку"}</button></form></>}</aside></div>
+      <div className="layout"><section><div className="panel" style={{marginBottom:14}}><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(135px,1fr))",gap:10}}><div className="field" style={{margin:0}}><label htmlFor="categoryFilter">Категория</label><select id="categoryFilter" value={categoryFilter} onChange={e=>setCategoryFilter(e.target.value)} style={{width:"100%",border:"1px solid #dfe3eb",borderRadius:10,padding:12,background:"white"}}><option value="all">Все категории</option>{CATEGORIES.map(c=><option key={c.value} value={c.value}>{c.label}</option>)}</select></div><div className="field" style={{margin:0}}><label htmlFor="minPrice">Цена от, ₽</label><input id="minPrice" type="number" min="0" value={minPrice} onChange={e=>setMinPrice(e.target.value)} placeholder="0"/></div><div className="field" style={{margin:0}}><label htmlFor="maxPrice">Цена до, ₽</label><input id="maxPrice" type="number" min="0" value={maxPrice} onChange={e=>setMaxPrice(e.target.value)} placeholder="Без ограничения"/></div><div className="field" style={{margin:0}}><label htmlFor="sortBy">Сортировка</label><select id="sortBy" value={sortBy} onChange={e=>setSortBy(e.target.value as "newest"|"price-asc"|"price-desc")} style={{width:"100%",border:"1px solid #dfe3eb",borderRadius:10,padding:12,background:"white"}}><option value="newest">Сначала новые</option><option value="price-asc">Сначала дешевле</option><option value="price-desc">Сначала дороже</option></select></div></div><p className="muted" style={{marginBottom:0}}>Найдено объявлений: {shown.length}</p></div><div className="cards">{shown.length===0?<div className="empty"><div style={{fontSize:32}}>⌕</div><strong>{filter==="mine"?"Пока нет твоих объявлений":filter==="favorites"?"В избранном пока пусто":"Пока нет объявлений"}</strong><p className="muted">{search?"Попробуй изменить запрос.":filter==="favorites"?"Нажимай «В избранное» у понравившихся объявлений.":"Проверенные объявления появятся здесь."}</p></div>:shown.map(x=><article className="card" key={x.id}><div className="photo">{x.image_url?<img src={x.image_url} alt={x.title}/>:<span>◇</span>}</div><div className="card-body"><button type="button" className={"pill "+(favoriteIds.includes(x.id)?"active":"")} style={{marginBottom:8}} onClick={()=>void toggleFavorite(x.id)} aria-label={favoriteIds.includes(x.id)?"Убрать из избранного":"Добавить в избранное"}>{favoriteIds.includes(x.id)?"♥ В избранном":"♡ В избранное"}</button>{filter==="mine"&&<span className="status">{x.status==="approved"?"Опубликовано":x.status==="rejected"?"Отклонено":x.status==="needs_review"?"Нужна проверка":"На модерации"}</span>}<h3>{x.title}</h3><div className="meta" style={{marginBottom:8}}>{CATEGORIES.find(c=>c.value===x.category)?.label ?? "Другое"}</div><div className="meta" style={{marginBottom:8}}><a href={`/seller/${x.user_id}`} style={{color:"#5b5ce2",fontWeight:700}}>Профиль продавца →</a></div><div className="price">{new Intl.NumberFormat("ru-RU",{maximumFractionDigits:2}).format(Number(x.price))} ₽</div><div className="meta">⌖ {x.city} · {new Date(x.created_at).toLocaleDateString("ru-RU")}</div><p className="muted" style={{overflowWrap:"anywhere"}}>{x.description}</p></div></article>)}</div></section>
+      <aside className="panel" id="account">{!user?<><h2>Твой аккаунт</h2><p>Войди или зарегистрируйся, чтобы разместить бесплатное объявление.</p><form onSubmit={signIn}><div className="field"><label htmlFor="email">Электронная почта</label><input id="email" type="email" autoComplete="email" required value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@example.com"/></div><div className="field"><label htmlFor="password">Пароль</label><input id="password" type="password" minLength={8} autoComplete="current-password" required value={password} onChange={e=>setPassword(e.target.value)} placeholder="Не менее 8 символов"/></div><button className="btn primary full" disabled={busy||!supabase}>{busy?"Подожди…":"Войти"}</button></form><button className="btn secondary full" style={{marginTop:9}} disabled={busy||!supabase} onClick={signUp}>Создать аккаунт</button><p>Может потребоваться подтверждение почты.</p></>:<><h2>Новое объявление</h2><p>Публикация бесплатна. Новые объявления проходят проверку.</p><form onSubmit={createListing}><div className="field"><label htmlFor="title">Название</label><input id="title" value={title} onChange={e=>setTitle(e.target.value)} minLength={3} maxLength={120} required placeholder="Например, велосипед"/></div><div className="field"><label htmlFor="description">Описание</label><textarea id="description" value={description} onChange={e=>setDescription(e.target.value)} minLength={5} maxLength={5000} required placeholder="Состояние, характеристики, детали…"/></div><div className="field"><label htmlFor="price">Цена, ₽</label><input id="price" type="number" min="0" step="0.01" value={price} onChange={e=>setPrice(e.target.value)} required placeholder="0"/></div><div className="field"><label htmlFor="city">Город</label><input id="city" value={city} onChange={e=>setCity(e.target.value)} minLength={2} maxLength={100} required placeholder="Твой город"/></div><div className="field"><label htmlFor="listingCategory">Категория</label><select id="listingCategory" value={listingCategory} onChange={e=>setListingCategory(e.target.value)} required style={{width:"100%",border:"1px solid #dfe3eb",borderRadius:10,padding:12,background:"white"}}>{CATEGORIES.map(c=><option key={c.value} value={c.value}>{c.label}</option>)}</select></div><div className="field"><label htmlFor="image">Фото объявления (необязательно, до 5 МБ)</label><input id="image" type="file" accept="image/jpeg,image/png,image/webp" onChange={e=>setPhoto(e.target.files?.[0]??null)}/><p className="muted">Форматы: JPG, PNG, WebP.</p></div><button className="btn primary full" disabled={busy}>{busy?"Отправка…":"Отправить на проверку"}</button></form></>}</aside></div>
       <ChatPanel
         supabase={supabase}
         user={user ? { id: user.id } : null}
