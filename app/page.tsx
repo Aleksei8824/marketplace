@@ -18,7 +18,7 @@ export default function Home() {
   const [email,setEmail] = useState(""); const [password,setPassword] = useState("");
   const [title,setTitle] = useState(""); const [description,setDescription] = useState("");
   const [price,setPrice] = useState(""); const [city,setCity] = useState(""); const [photo,setPhoto] = useState<File|null>(null);
-  const [search,setSearch] = useState(""); const [filter,setFilter] = useState<"all"|"mine">("all");
+  const [search,setSearch] = useState(""); const [filter,setFilter] = useState<"all"|"mine"|"favorites">("all");
   const [notice,setNotice] = useState(""); const [kind,setKind] = useState("info"); const [busy,setBusy] = useState(false);
   const say=(s:string,k="info")=>{setNotice(s);setKind(k)};
   async function loadListings(uid?:string, moderator=false) {
