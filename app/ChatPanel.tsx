@@ -41,6 +41,13 @@ export default function ChatPanel({
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
+  const [unreadByConversation, setUnreadByConversation] =
+    useState<Record<string, number>>({});
+  const [messageNotice, setMessageNotice] = useState<{
+    conversationId: string;
+    title: string;
+    body: string;
+  } | null>(null);
 
   async function loadConversations() {
     if (!supabase || !user) {
@@ -65,10 +72,58 @@ export default function ChatPanel({
   useEffect(() => {
     setActive(null);
     setMessages([]);
+    setUnreadByConversation({});
+    setMessageNotice(null);
     void loadConversations();
   }, [supabase, user?.id]);
 
   const activeId = active?.id;
+
+  useEffect(() => {
+    if (!supabase || !user || conversations.length === 0) return;
+
+    const channel = supabase
+      .channel("message-notifications-" + user.id)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "messages",
+        },
+        (payload) => {
+          const incoming = payload.new as Message;
+
+          if (incoming.sender_id === user.id) return;
+
+          const conversation = conversations.find(
+            (item) => item.id === incoming.conversation_id
+          );
+
+          if (!conversation || activeId === incoming.conversation_id) return;
+
+          const title =
+            listings.find((item) => item.id === conversation.listing_id)
+              ?.title ?? "Объявление";
+
+          setUnreadByConversation((previous) => ({
+            ...previous,
+            [conversation.id]: (previous[conversation.id] ?? 0) + 1,
+          }));
+
+          setMessageNotice({
+            conversationId: conversation.id,
+            title,
+            body: incoming.body,
+          });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [supabase, user?.id, conversations, activeId, listings]);
 
   useEffect(() => {
     if (!supabase || !activeId) {
@@ -233,6 +288,31 @@ export default function ChatPanel({
     >
       <h2>Чат покупателей и продавцов</h2>
 
+      {messageNotice && (
+        <div className="notice" role="status" style={{ marginBottom: 16 }}>
+          <strong>Новое сообщение: {messageNotice.title}</strong>
+          <p style={{ overflowWrap: "anywhere" }}>{messageNotice.body}</p>
+          <button
+            type="button"
+            className="btn primary"
+            onClick={() => {
+              const target = conversations.find(
+                (item) => item.id === messageNotice.conversationId
+              );
+              if (target) setActive(target);
+              setUnreadByConversation((previous) => {
+                const next = { ...previous };
+                delete next[messageNotice.conversationId];
+                return next;
+              });
+              setMessageNotice(null);
+            }}
+          >
+            Открыть переписку
+          </button>
+        </div>
+      )}
+
       {!user ? (
         <p className="muted">Войди в аккаунт, чтобы пользоваться чатом.</p>
       ) : (
@@ -281,9 +361,21 @@ export default function ChatPanel({
                       "pill " +
                       (active?.id === conversation.id ? "active" : "")
                     }
-                    onClick={() => setActive(conversation)}
+                    onClick={() => {
+                      setActive(conversation);
+                      setUnreadByConversation((previous) => {
+                        const next = { ...previous };
+                        delete next[conversation.id];
+                        return next;
+                      });
+                      if (messageNotice?.conversationId === conversation.id) {
+                        setMessageNotice(null);
+                      }
+                    }}
                   >
                     {title}
+                    {(unreadByConversation[conversation.id] ?? 0) > 0 &&
+                      ` · Новых: ${unreadByConversation[conversation.id]}`}
                   </button>
                 );
               })}
